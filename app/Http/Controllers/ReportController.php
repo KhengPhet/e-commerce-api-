@@ -2,46 +2,26 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Order;
-use App\Models\Product;
-use App\Models\User;
-use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ReportController extends Controller
 {
-    // Summary Report
-    public function summary(){
-        $totalUsers = User::count();
-        $totalProducts = Product::count();
-        $totalOrders = Order::count();
-        $totalSales = Order::sum('total_price');
+    public function salesByCategory()
+    {
+        $rows = DB::table('order_items')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->join('categories', 'products.category_id', '=', 'categories.id')
+            ->select(
+                'categories.name as category',
+                DB::raw('SUM(order_items.quantity * order_items.price) as total_sales')
+            )
+            ->groupBy('categories.name')
+            ->orderByDesc('total_sales')
+            ->get();
 
         return response()->json([
-            'message' => 'Report summary generated successfully',
-            'data' => [
-                'total_users' => $totalUsers,
-                'total_products' => $totalProducts,
-                'total_orders' => $totalOrders,
-                'total_sales' => number_format($totalSales, 2),
-            ],
-        ], 200);
-    }
-
-    // Detailed Orders Report
-    public function ordersReport(){
-        $orders = Order::with(['user', 'product'])->orderBy('created_at', 'desc')->get();
-        return response()->json([
-            'message' => 'Orders report fetched successfully',
-            'orders' => $orders
-        ], 200);
-    }
-
-    // Product Stock Report
-    public function productStock(){
-        $products = Product::select('id', 'name', 'stock', 'price')->orderBy('stock', 'asc')->get();
-        return response()->json([
-            'message' => 'Product stock report fetched successfully',
-            'products' => $products
-        ], 200);
+            'labels' => $rows->pluck('category'),
+            'sales' => $rows->pluck('total_sales'),
+        ]);
     }
 }

@@ -2,67 +2,214 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
 use App\Models\Order;
-use App\Models\Product;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 
 class OrderController extends Controller
 {
+    /**
+     * LIST ORDERS
+     */
     public function index()
     {
-        $orders = Order::where('user_id', Auth::id())->get();
+        $orders = Order::with(['orderItems.product', 'customer.user'])
+            ->orderByDesc('id')
+            ->get();
+
         return response()->json($orders);
     }
 
+    /**
+     * SHOW ORDER
+     */
+    public function show($id)
+    {
+        $order = Order::with(['orderItems.product', 'customer.user'])
+            ->find($id);
 
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        return response()->json($order);
+    }
+
+    /**
+     * CREATE ORDER
+     */
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'product_id' => 'required|integer|exists:products,id',
-            'quantity' => 'required|integer|min:1',
+            'customer_id' => 'sometimes|integer',
+            'user_id'     => 'sometimes|integer',
+            'payment_method' => 'required|string',
+            'subtotal' => 'required|numeric',
+            'shipping_fee' => 'required|numeric',
+            'tax' => 'required|numeric',
+            'total_amount' => 'required|numeric',
+            'phone' => 'sometimes|nullable|string|max:255',
+            'address' => 'sometimes|nullable|string|max:255',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|integer',
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.price' => 'required|numeric',
         ]);
 
+        $customer = null;
 
+        if (!empty($validated['customer_id'])) {
+            $customer = Customer::find($validated['customer_id']);
+            if (!$customer) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Customer not found'
+                ], 422);
+            }
+        } elseif (!empty($validated['user_id'])) {
+            $customer = Customer::firstOrCreate(
+                ['user_id' => $validated['user_id']],
+                [
+                    'phone'   => $request->input('phone', ''),
+                    'address' => $request->input('address', ''),
+                    'status'  => 'Active',
+                ]
+            );
 
-        $product = Product::find($validated['product_id']);
-
-        if (!$product) {
-            return response()->json(['message' => 'Product not found'], 404);
+            if ($customer) {
+                $customer->update([
+                    'phone'   => $request->input('phone', $customer->phone),
+                    'address' => $request->input('address', $customer->address),
+                ]);
+            }
         }
 
-        if ($product->stock < $validated['quantity']) {
-            return response()->json(['message' => 'Not enough stock available'], 400);
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'A customer_id or user_id is required to place an order'
+            ], 422);
         }
 
-        $user = Auth::user(); // from token
-        $product = Product::findOrFail($request->product_id);
-        $total = $product->price * $request->quantity;
-        $order = Order::create([
-            'user_id' => $user->id,
-            'product_id' => $product->id,
-            'quantity' => $request->quantity,
-            'total' => $total,
-            'status' => 'pending',
-        ]);
+        DB::beginTransaction();
 
-        $product->stock -= $validated['quantity'];
-        $product->save();
+        try {
+            $order = Order::create([
+                'customer_id' => $customer->id,
+                'order_number' => 'ORD-' . strtoupper(Str::random(10)),
+                'payment_method' => $validated['payment_method'],
+                'subtotal' => $validated['subtotal'],
+                'shipping_fee' => $validated['shipping_fee'],
+                'tax' => $validated['tax'],
+                'total_amount' => $validated['total_amount'],
+                'status' => 'pending',
+            ]);
 
-        return response()->json([
-            'message' => 'Order created successfully',
-            'order' => $order
-        ], 201);
+            foreach ($validated['items'] as $item) {
+                $order->orderItems()->create([
+                    'product_id' => $item['product_id'],
+                    'quantity' => $item['quantity'],
+                    'price' => $item['price'],
+                ]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'data' => $order
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Order creation failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    // Get all orders for current user
-    public function userOrders()
+    /**
+     * MARK ORDER PAID (CALLED AFTER VERIFY)
+     */
+    public function markPaid(Request $request)
     {
-        $orders = Order::with('product')->where('user_id', Auth::id())->latest()->get(['id', 'product_id', 'stock', 'total', 'status', 'created_at']); // Include created_at
+        $request->validate([
+            'order_number' => 'required|string'
+        ]);
+
+        $order = Order::where('order_number', $request->order_number)->first();
+
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        $order->update([
+            'status' => 'paid'
+        ]);
 
         return response()->json([
-            'status' => 'success',
-            'orders' => $orders
-        ], 200);
+            'success' => true,
+            'message' => 'Order marked as PAID',
+            'order' => $order
+        ]);
+    }
+
+    /**
+     * CREATE PAYMENT (CALL LARAVEL 11)
+     */
+    public function createPayment(Request $request)
+    {
+        $request->validate([
+            'order_number' => 'required|string'
+        ]);
+
+        $order = Order::where('order_number', $request->order_number)->firstOrFail();
+
+        $response = Http::post(
+            env('PAYMENT_API') . '/payment/bakong/create',
+            [
+                'order_number' => $order->order_number,
+                'amount' => $order->total_amount
+            ]
+        );
+
+        if (!$response->successful()) {
+            return response()->json([
+                'message' => 'Payment service error',
+                'error' => $response->body()
+            ], 500);
+        }
+
+        return response()->json($response->json());
+    }
+
+    /**
+     * VERIFY PAYMENT (CALL LARAVEL 11)
+     */
+    public function verifyPayment(Request $request)
+    {
+        $request->validate([
+            'order_number' => 'required|string',
+            'md5' => 'required|string'
+        ]);
+
+        $response = Http::post(
+            env('PAYMENT_API') . '/payment/bakong/verify',
+            [
+                'md5' => $request->md5
+            ]
+        );
+
+        if (strtoupper($response->json('status')) === 'PAID') {
+            Order::where('order_number', $request->order_number)
+                ->update(['status' => 'PAID']);
+        }
+
+        return response()->json($response->json());
     }
 }

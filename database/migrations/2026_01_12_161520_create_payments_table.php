@@ -11,14 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('products', function (Blueprint $table) {
+        Schema::create('payments', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
-            $table->text('description')->nullable();
-            $table->decimal('price', 10, 2);
-            $table->integer('stock')->default(0);
-            $table->string('category')->nullable();
-            $table->string('image')->nullable();
+            $table->foreignId('order_id')->constrained()->cascadeOnDelete();
+            $table->string('md5')->unique();
+            $table->longText('qr_code');
+            $table->decimal('amount', 12, 2);
+            $table->string('status')->default('PENDING');
             $table->timestamps();
         });
     }
@@ -28,6 +27,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('products');
+        Schema::dropIfExists('payments');
     }
 };
