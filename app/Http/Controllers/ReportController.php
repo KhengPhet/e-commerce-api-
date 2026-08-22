@@ -24,4 +24,26 @@ class ReportController extends Controller
             'sales' => $rows->pluck('total_sales'),
         ]);
     }
+
+    public function orders()
+    {
+        $orders = DB::table('orders')
+            ->leftJoin('customers', 'orders.customer_id', '=', 'customers.id')
+            ->leftJoin('users', 'customers.user_id', '=', 'users.id')
+            ->select(
+                'orders.id',
+                DB::raw("COALESCE(users.name, 'Guest') as customer_name"),
+                'users.email',
+                'orders.total_amount as total',
+                'orders.status',
+                'orders.created_at'
+            )
+            ->orderByDesc('orders.created_at')
+            ->get();
+
+        return response()->json([
+            'data' => $orders,
+            'total_sales' => $orders->sum('total'),
+        ]);
+    }
 }

@@ -60,6 +60,7 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? [
                 PDO::ATTR_TIMEOUT => 60,
+                PDO::ATTR_PERSISTENT => false,
                 PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
             ] : [],
         ],

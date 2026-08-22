@@ -52,6 +52,7 @@ Route::post('/payment/verify', [PaymentController::class, 'verify']);
 
 
 Route::get('/reports/sales-by-category', [ReportController::class, 'salesByCategory']);
+Route::get('/reports/orders', [ReportController::class, 'orders']);
 
 Route::get('/dashboard/summary', [DashboardController::class, 'summary']);
 
