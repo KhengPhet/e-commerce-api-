@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 
@@ -13,61 +14,102 @@ class AuthController extends Controller
     // REGISTER
     public function register(Request $request)
     {
-        $validated = $request->validate([
+        $validator = Validator::make($request->all(), [
             'name'     => 'required|string|max:255',
-            'email'    => 'required|email|max:255|unique:users,email',
-            'password' => 'required|string|min:6|confirmed',
-            'password_confirmation' => 'required|string|min:6',
-            'role'     => 'sometimes|in:user,admin'
+            'email'    => 'required|email|max:255',
+            'password' => 'required|string|min:6',
+            'password_confirmation' => 'sometimes|required_with:password|same:password',
         ]);
 
-        $validated['role'] = $validated['role'] ?? 'user';
-        $validated['password'] = Hash::make($validated['password']);
-        $user = User::create($validated);
+        if ($validator->fails()) {
+            $errors = $validator->errors();
+
+            // Friendly message for duplicate email
+            if ($errors->has('email') && str_contains($errors->first('email'), 'already been taken')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Email already exists',
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $errors->first(),
+                'errors'  => $errors->messages(),
+            ], 422);
+        }
+
+        // Belt & suspenders: explicit duplicate check
+        if (User::where('email', strtolower($request->email))->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Email already exists',
+            ], 422);
+        }
+
+        $user = User::create([
+            'name'     => $request->name,
+            'email'    => strtolower($request->email),
+            'password' => Hash::make($request->password),
+            'role'     => 'user', // public registration is always a normal user
+        ]);
 
         $token = JWTAuth::fromUser($user);
 
         return response()->json([
-            'status' => 'success',
-            'message' => 'User registered successfully',
+            'success' => true,
+            'message' => 'Register successfully',
             'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
+                'id'    => $user->id,
+                'name'  => $user->name,
                 'email' => $user->email,
-                'role' => $user->role
+                'role'  => $user->role,
             ],
-            'token' => $token
+            'token' => $token,
         ], 201);
     }
 
     // LOGIN
     public function login(Request $request)
     {
-        $request->validate([
-            'email' => 'required|email',
+        $validator = Validator::make($request->all(), [
+            'email'    => 'required|email',
             'password' => 'required|string|min:6',
         ]);
 
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors'  => $validator->errors()->messages(),
+            ], 422);
+        }
+
         // Find user by email
-        $user = User::where('email', $request->email)->first();
+        $user = User::where('email', strtolower($request->email))->first();
 
         // Check credentials
         if (!$user || !Hash::check($request->password, $user->password)) {
-            return response()->json(['error' => 'Invalid credentials'], 401);
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid email or password',
+                'error'   => 'Invalid credentials',
+            ], 401);
         }
 
         // Generate token
         $token = JWTAuth::fromUser($user);
 
         return response()->json([
-            'status' => 'success',
-            'token' => $token,
+            'success' => true,
+            'message' => 'Login successfully',
+            'token'   => $token,
             'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
+                'id'    => $user->id,
+                'name'  => $user->name,
                 'email' => $user->email,
-                'role' => $user->role
-            ]
+                'role'  => $user->role,
+            ],
         ]);
     }
 
@@ -78,12 +120,12 @@ class AuthController extends Controller
             JWTAuth::invalidate(JWTAuth::getToken());
 
             return response()->json([
-                'status' => 'success',
+                'success' => true,
                 'message' => 'Logged out successfully'
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'status' => 'error',
+                'success' => false,
                 'message' => 'Failed to logout'
             ], 500);
         }
