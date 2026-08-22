@@ -14,13 +14,13 @@ class DashboardController extends Controller
         $startDate = Carbon::now()->subMonth();
 
         // ✅ Revenue = សរុបតម្លៃ Order
-        $revenue = Order::where('status', 'completed')
+        $revenue = Order::whereIn('status', ['completed', 'paid'])
             ->where('created_at', '>=', $startDate)
             ->sum('total_amount');
 
         // ✅ Product Sold = សរុប Item លក់បាន
         $productSold = OrderItem::whereHas('order', function ($q) use ($startDate) {
-            $q->where('status', 'completed')
+            $q->whereIn('status', ['completed', 'paid'])
               ->where('created_at', '>=', $startDate);
         })->sum('quantity');
 
