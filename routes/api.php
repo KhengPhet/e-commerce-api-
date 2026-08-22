@@ -18,6 +18,10 @@ use Illuminate\Support\Facades\Route;
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
+// CORS preflight fallback: answer OPTIONS for any API path with 200
+Route::options('/{any}', fn () => response()->json(['status' => 'ok']))
+    ->where('any', '.*');
+
 Route::apiResource('brands', BrandController::class);
 
 
