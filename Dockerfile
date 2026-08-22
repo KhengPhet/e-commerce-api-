@@ -1,8 +1,10 @@
 # ============================================
 # Laravel 10 API - Railway Deployment
-# PHP 8.3 + MySQL + KHQR (simple-qrcode)
+# PHP 8.2 + MySQL + KHQR (simple-qrcode)
+# NOTE: PHP 8.2 required by lcobucci/clock 2.3.0
+#       (dependency of lcobucci/jwt -> tymon/jwt-auth)
 # ============================================
-FROM php:8.3-cli
+FROM php:8.2-cli
 
 # ---------- System dependencies ----------
 RUN apt-get update && apt-get install -y --no-install-recommends \
